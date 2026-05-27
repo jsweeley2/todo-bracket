@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Todo Priority Bracket — rank your to-do list by playing a tournament</title>
+    <meta
+      name="description"
+      content="Paste your to-do list and rank it by playing a March-Madness-style bracket. Pick winners head-to-head and get a complete priority ranking. Runs entirely in your browser."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Todo Priority Bracket" />
+    <meta
+      property="og:description"
+      content="Rank your to-do list by playing a tournament — pick winners head-to-head, get a ranked list."
+    />
+    <meta name="twitter:card" content="summary" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%86%3C/text%3E%3C/svg%3E"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html {
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          Helvetica,
+          Arial,
+          sans-serif;
+      }
+      body {
+        background: #f8fafc;
+      }
+      .fade-in {
+        animation: fade 0.18s ease;
+      }
+      @keyframes fade {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
+  </head>
+  <body class="text-slate-800">
+    <main class="mx-auto max-w-2xl px-4 py-8 sm:py-12">
+      <!-- Hero -->
+      <header class="mb-8 text-center">
+        <h1 class="text-3xl font-extrabold tracking-tight sm:text-4xl">
+          🏆 Todo Priority Bracket
+        </h1>
+        <p class="mx-auto mt-3 max-w-xl text-lg text-slate-600">
+          Rank your to-do list by playing a tournament — pick winners
+          head-to-head, get a ranked list.
+        </p>
+        <p class="mx-auto mt-3 max-w-xl text-sm text-slate-500">
+          Paste your todos, then choose the more important of two at a time.
+          Every item is seeded into a single-elimination bracket; even the items
+          that lose early get fully ranked through consolation rounds, so you
+          end with a clean #1-to-#N priority order.
+        </p>
+      </header>
+
+      <!-- Tool -->
+      <section
+        id="card"
+        class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"
+      >
+        <!-- Landing -->
+        <div id="landing">
+          <label
+            for="todos"
+            class="mb-2 block text-sm font-semibold text-slate-700"
+            >Paste your todos, one per line</label
+          >
+          <textarea
+            id="todos"
+            rows="8"
+            class="w-full resize-y rounded-xl border border-slate-300 p-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            placeholder="Fix the leaky faucet&#10;Reply to Dana&#10;Renew car registration&#10;Plan Q3 roadmap&#10;Book dentist"
+          ></textarea>
+          <div class="mt-3 flex items-center justify-between">
+            <span id="count" class="text-xs text-slate-500"></span>
+            <button
+              id="start"
+              class="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled
+            >
+              Start Bracket
+            </button>
+          </div>
+        </div>
+
+        <!-- Matchup + results render here -->
+        <div id="stage" class="hidden"></div>
+      </section>
+
+      <footer class="mt-8 text-center text-xs text-slate-400">
+        Runs entirely in your browser. Nothing is uploaded.
+      </footer>
+    </main>
+
+    <script type="module">
+      import {
+        rankItems,
+        makeRng,
+        countMatches,
+        roundName,
+      } from "./bracket.js";
+
+      const $ = (id) => document.getElementById(id);
+      const landing = $("landing");
+      const stage = $("stage");
+      const todosEl = $("todos");
+      const startBtn = $("start");
+      const countEl = $("count");
+
+      // ---- helpers ----
+      function parseTodos(text) {
+        const seen = new Set();
+        const out = [];
+        for (const raw of text.split(/\r?\n/)) {
+          const line = raw.trim();
+          if (!line) continue;
+          if (seen.has(line)) continue;
+          seen.add(line);
+          out.push({ id: "i" + out.length, label: line });
+        }
+        return out;
+      }
+
+      function el(tag, cls, text) {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text != null) n.textContent = text; // plain text — no HTML injection
+        return n;
+      }
+      function clear(node) {
+        while (node.firstChild) node.removeChild(node.firstChild);
+      }
+
+      function escapeMarkdown(s) {
+        // Escape characters that markdown would otherwise interpret, so
+        // items render literally in the exported list.
+        return s.replace(/([\\`*_{}\[\]()#+\-.!>~|])/g, "\\$1");
+      }
+
+      // ---- landing state ----
+      function refreshCount() {
+        const items = parseTodos(todosEl.value);
+        const n = items.length;
+        startBtn.disabled = n < 2;
+        if (n === 0) countEl.textContent = "";
+        else if (n === 1)
+          countEl.textContent = "1 todo — add at least 2 to start.";
+        else countEl.textContent = n + " todos ready.";
+      }
+      todosEl.addEventListener("input", refreshCount);
+      refreshCount();
+
+      // ---- matchup UI: returns a Promise resolving to the picked winner ----
+      function showMatchup(a, b, stageName, roundSize, matchNo, total) {
+        return new Promise((resolve) => {
+          clear(stage);
+          stage.classList.add("fade-in");
+          // strip+re-add to retrigger the animation
+          void stage.offsetWidth;
+
+          stage.appendChild(
+            el(
+              "div",
+              "mb-1 text-xs font-medium uppercase tracking-wide text-slate-400",
+              "Match " + matchNo + " of " + total,
+            ),
+          );
+          stage.appendChild(
+            el(
+              "div",
+              "mb-4 text-sm font-semibold text-indigo-600",
+              stageName + " — " + roundName(roundSize),
+            ),
+          );
+
+          const grid = el("div", "grid grid-cols-1 gap-3 sm:grid-cols-2");
+          const base =
+            "w-full rounded-xl border-2 border-slate-200 bg-white p-5 text-left text-base font-medium text-slate-800 transition hover:border-indigo-400 hover:bg-indigo-50 break-words";
+          const focusCls = " border-indigo-500 ring-2 ring-indigo-200 bg-indigo-50";
+
+          const cardA = el("button", base, a.label);
+          const cardB = el("button", base, b.label);
+          cardA.type = "button";
+          cardB.type = "button";
+          grid.appendChild(cardA);
+          grid.appendChild(cardB);
+          stage.appendChild(grid);
+          stage.appendChild(
+            el(
+              "div",
+              "mt-4 text-xs text-slate-400",
+              "Click a card, or use ← / → then Enter.",
+            ),
+          );
+
+          let focused = cardA;
+          function setFocus(card) {
+            cardA.className = base;
+            cardB.className = base;
+            card.className = base + focusCls;
+            focused = card;
+          }
+          setFocus(cardA);
+
+          function finish(winner) {
+            document.removeEventListener("keydown", onKey);
+            resolve(winner);
+          }
+          cardA.addEventListener("click", () => finish(a));
+          cardB.addEventListener("click", () => finish(b));
+          function onKey(ev) {
+            const ae = document.activeElement;
+            if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA"))
+              return;
+            if (ev.key === "ArrowLeft") {
+              setFocus(cardA);
+              ev.preventDefault();
+            } else if (ev.key === "ArrowRight") {
+              setFocus(cardB);
+              ev.preventDefault();
+            } else if (ev.key === "Enter") {
+              finish(focused === cardB ? b : a);
+              ev.preventDefault();
+            }
+          }
+          document.addEventListener("keydown", onKey);
+        });
+      }
+
+      // ---- results ----
+      function showResults(ranking) {
+        clear(stage);
+        stage.classList.add("fade-in");
+        void stage.offsetWidth;
+
+        stage.appendChild(
+          el(
+            "div",
+            "mb-4 text-sm font-semibold text-slate-500",
+            "Your priority ranking",
+          ),
+        );
+
+        const list = el("ol", "space-y-1");
+        ranking.forEach((item, i) => {
+          const row = el(
+            "li",
+            i === 0
+              ? "flex items-baseline gap-3 rounded-lg bg-amber-50 px-3 py-2 text-lg font-bold text-amber-900"
+              : "flex items-baseline gap-3 px-3 py-1 text-slate-800",
+          );
+          row.appendChild(
+            el(
+              "span",
+              i === 0
+                ? "w-8 shrink-0 text-right tabular-nums"
+                : "w-8 shrink-0 text-right tabular-nums text-slate-400",
+              i + 1 + ".",
+            ),
+          );
+          row.appendChild(el("span", null, (i === 0 ? "🏆 " : "") + item.label));
+          list.appendChild(row);
+        });
+        stage.appendChild(list);
+
+        const btns = el("div", "mt-5 flex flex-wrap gap-2");
+        const copyText = el(
+          "button",
+          "rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200",
+          "Copy as text",
+        );
+        copyText.type = "button";
+        copyText.addEventListener("click", () => {
+          const out = ranking.map((it, i) => `${i + 1}. ${it.label}`).join("\n");
+          copy(out, copyText, "Copy as text");
+        });
+        const copyMd = el(
+          "button",
+          "rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200",
+          "Copy as markdown",
+        );
+        copyMd.type = "button";
+        copyMd.addEventListener("click", () => {
+          const out = ranking
+            .map((it, i) => `${i + 1}. ${escapeMarkdown(it.label)}`)
+            .join("\n");
+          copy(out, copyMd, "Copy as markdown");
+        });
+        const again = el(
+          "button",
+          "rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700",
+          "Start over",
+        );
+        again.type = "button";
+        again.addEventListener("click", reset);
+
+        btns.appendChild(copyText);
+        btns.appendChild(copyMd);
+        btns.appendChild(again);
+        stage.appendChild(btns);
+      }
+
+      function copy(text, btn, label) {
+        navigator.clipboard.writeText(text).then(
+          () => {
+            btn.textContent = "Copied!";
+            setTimeout(() => (btn.textContent = label), 1400);
+          },
+          () => {
+            btn.textContent = "Press Ctrl+C";
+          },
+        );
+      }
+
+      function showError(msg) {
+        clear(stage);
+        stage.appendChild(
+          el("div", "text-sm font-medium text-red-600", msg),
+        );
+        const again = el(
+          "button",
+          "mt-4 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700",
+          "Start over",
+        );
+        again.type = "button";
+        again.addEventListener("click", reset);
+        stage.appendChild(again);
+      }
+
+      function reset() {
+        clear(stage);
+        stage.classList.add("hidden");
+        landing.classList.remove("hidden");
+        refreshCount();
+      }
+
+      // ---- run ----
+      async function run() {
+        const items = parseTodos(todosEl.value);
+        if (items.length < 2) return;
+        landing.classList.add("hidden");
+        stage.classList.remove("hidden");
+
+        const seed = (Math.random() * 2 ** 32) >>> 0;
+        const total = await countMatches(items, seed);
+        let matchNo = 0;
+        const ranking = await rankItems(
+          items,
+          makeRng(seed),
+          (a, b, stageName, roundSize) =>
+            showMatchup(a, b, stageName, roundSize, ++matchNo, total),
+        );
+
+        // Ship-blocking sanity check: exactly N unique original items.
+        const ids = ranking.map((r) => r.id);
+        const uniq = new Set(ids);
+        const valid =
+          ranking.length === items.length &&
+          uniq.size === items.length &&
+          ids.every((id) => /^i\d+$/.test(id));
+        if (!valid) {
+          console.error("Ranking failed sanity check", { items, ranking });
+          showError(
+            "Something went wrong building the ranking. Please start over.",
+          );
+          return;
+        }
+        showResults(ranking);
+      }
+
+      startBtn.addEventListener("click", run);
+    </script>
+  </body>
+</html>

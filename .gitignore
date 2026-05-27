@@ -1,0 +1,4 @@
+.vercel
+node_modules
+_check.mjs
+.DS_Store
