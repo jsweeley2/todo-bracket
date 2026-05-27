@@ -3,7 +3,7 @@
 Rank your to-do list by playing a tournament. Paste your todos, pick the more
 important of two items at a time, and get a complete #1-to-#N priority order.
 
-Runs **entirely in your browser** — no backend, no accounts, nothing uploaded.
+Runs **entirely in your browser**: no backend, no accounts, nothing uploaded.
 
 ## Run it
 
@@ -38,11 +38,11 @@ just a winner.
    only real-vs-real matchups are shown to you.
 2. The tournament champion is **#1** and the loser of the final is **#2**.
 3. For every position after that, the real losers of each round form a tier
-   that is **itself ranked by the same procedure** — a consolation
+   that is **itself ranked by the same procedure**, a consolation
    mini-bracket. Tiers are concatenated newest-round-first (semifinal losers,
    then quarterfinal losers, and so on).
-4. A loss only counts when you lose to **another real item** — losing to a bye
-   doesn't push you into consolation — so consolation brackets are padded with
+4. A loss only counts when you lose to **another real item**: losing to a bye
+   doesn't push you into consolation, so consolation brackets are padded with
    their own byes and the recursion continues until every item has a spot.
 
 Because each real item is eliminated exactly once, concatenating the tiers
@@ -51,6 +51,6 @@ deterministic for a given random seed, so the "Match X of Y" progress is exact.
 
 ## Files
 
-- `index.html` — the whole app (markup + UI logic).
-- `bracket.js` — the ranking engine (shared by the app and the tests).
-- `test.mjs` — Node test suite.
+- `index.html`: the whole app (markup + UI logic).
+- `bracket.js`: the ranking engine (shared by the app and the tests).
+- `test.mjs`: Node test suite.

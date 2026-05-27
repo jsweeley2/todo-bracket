@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Todo Priority Bracket — rank your to-do list by playing a tournament</title>
+    <title>Todo Priority Bracket: rank your to-do list by playing a tournament</title>
     <meta
       name="description"
       content="Paste your to-do list and rank it by playing a March-Madness-style bracket. Pick winners head-to-head and get a complete priority ranking. Runs entirely in your browser."
@@ -12,7 +12,7 @@
     <meta property="og:title" content="Todo Priority Bracket" />
     <meta
       property="og:description"
-      content="Rank your to-do list by playing a tournament — pick winners head-to-head, get a ranked list."
+      content="Rank your to-do list by playing a tournament: pick winners head-to-head, get a ranked list."
     />
     <meta name="twitter:card" content="summary" />
     <link
@@ -57,7 +57,7 @@
           🏆 Todo Priority Bracket
         </h1>
         <p class="mx-auto mt-3 max-w-xl text-lg text-slate-600">
-          Rank your to-do list by playing a tournament — pick winners
+          Rank your to-do list by playing a tournament: pick winners
           head-to-head, get a ranked list.
         </p>
         <p class="mx-auto mt-3 max-w-xl text-sm text-slate-500">
@@ -139,7 +139,7 @@
       function el(tag, cls, text) {
         const n = document.createElement(tag);
         if (cls) n.className = cls;
-        if (text != null) n.textContent = text; // plain text — no HTML injection
+        if (text != null) n.textContent = text; // plain text, no HTML injection
         return n;
       }
       function clear(node) {
@@ -159,7 +159,7 @@
         startBtn.disabled = n < 2;
         if (n === 0) countEl.textContent = "";
         else if (n === 1)
-          countEl.textContent = "1 todo — add at least 2 to start.";
+          countEl.textContent = "1 todo. Add at least 2 to start.";
         else countEl.textContent = n + " todos ready.";
       }
       todosEl.addEventListener("input", refreshCount);
@@ -184,7 +184,7 @@
             el(
               "div",
               "mb-4 text-sm font-semibold text-indigo-600",
-              stageName + " — " + roundName(roundSize),
+              stageName + ": " + roundName(roundSize),
             ),
           );
 
