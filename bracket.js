@@ -118,3 +118,92 @@ export async function countMatches(items, seed) {
   });
   return total;
 }
+
+// ---------------------------------------------------------------------------
+// Interactive (full-bracket) variants.
+//
+// Same math as runTournament / rankItems, but a whole ROUND of matchups is
+// presented at once (via Promise.all) instead of one at a time. This lets the
+// UI draw a March-Madness-style bracket where every game in a round is
+// clickable simultaneously, then the next round reveals once the round is
+// done. The rng is consumed identically to runTournament (seeding only, never
+// picks), so the match count from countMatches() still matches exactly.
+//
+// `onBracket({ stageName, slots, startRank })` fires once per (sub-)tournament
+// right after seeding, so the UI can lay out an empty bracket.
+// `pick(a, b, stageName, roundSize, round, matchIndex)` resolves to the winner.
+export async function runTournamentInteractive(
+  items,
+  rng,
+  pick,
+  stageName,
+  onBracket,
+  startRank,
+) {
+  const S = nextPow2(items.length);
+  let slots = shuffle(items, rng);
+  while (slots.length < S) slots.push(null); // pad with byes
+  slots = shuffle(slots, rng); // scatter byes
+  if (onBracket) onBracket({ stageName, slots: slots.slice(), startRank });
+  const losersByRound = [];
+  let round = 0;
+  while (slots.length > 1) {
+    const size = slots.length;
+    const tasks = [];
+    for (let i = 0; i < slots.length; i += 2) {
+      const a = slots[i];
+      const b = slots[i + 1];
+      const matchIndex = i / 2;
+      if (a && b) {
+        tasks.push(
+          Promise.resolve(pick(a, b, stageName, size, round, matchIndex)).then(
+            (w) => ({ matchIndex, w, loser: w === a ? b : a }),
+          ),
+        );
+      } else if (a || b) {
+        tasks.push(Promise.resolve({ matchIndex, w: a || b, loser: null }));
+      } else {
+        tasks.push(Promise.resolve({ matchIndex, w: null, loser: null }));
+      }
+    }
+    const results = await Promise.all(tasks);
+    results.sort((x, y) => x.matchIndex - y.matchIndex);
+    const next = results.map((r) => r.w);
+    const losers = results.filter((r) => r.loser).map((r) => r.loser);
+    losersByRound[round++] = losers;
+    slots = next;
+  }
+  return { champion: slots[0], losersByRound };
+}
+
+// Full 1..N ranking, round-at-a-time. Identical ordering to rankItems for the
+// same picks; the recursion reveals each consolation mini-bracket in turn.
+// `opts`: { stageName, startRank, onBracket }.
+export async function rankItemsInteractive(items, rng, pick, opts = {}) {
+  const { stageName = "Winners", startRank = 1, onBracket } = opts;
+  if (items.length === 0) return [];
+  if (items.length === 1) return [items[0]];
+  const { champion, losersByRound } = await runTournamentInteractive(
+    items,
+    rng,
+    pick,
+    stageName,
+    onBracket,
+    startRank,
+  );
+  const ranking = [champion];
+  let pos = startRank + 1;
+  for (let r = losersByRound.length - 1; r >= 0; r--) {
+    const tier = losersByRound[r];
+    if (tier && tier.length) {
+      const sub = await rankItemsInteractive(tier, rng, pick, {
+        stageName: "Consolation",
+        startRank: pos,
+        onBracket,
+      });
+      for (const x of sub) ranking.push(x);
+      pos += sub.length;
+    }
+  }
+  return ranking;
+}

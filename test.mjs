@@ -5,7 +5,12 @@
 // exactly N unique items drawn from the input. Ship-blocking: if any
 // case fails, this exits non-zero.
 
-import { rankItems, makeRng, countMatches } from "./bracket.js";
+import {
+  rankItems,
+  rankItemsInteractive,
+  makeRng,
+  countMatches,
+} from "./bracket.js";
 
 const SIZES = [0, 1, 2, 3, 5, 7, 8, 10, 13, 16, 25, 32, 33];
 const SEEDS = [1, 7, 12345, 99999, 2 ** 31];
@@ -24,32 +29,41 @@ for (const n of SIZES) {
   const items = makeItems(n);
   for (const seed of SEEDS) {
     for (const strat of STRATEGIES) {
-      const rngPick = makeRng(seed * 2654435761 + 1);
-      const pick = (a, b) => {
-        if (strat === "left") return Promise.resolve(a);
-        if (strat === "right") return Promise.resolve(b);
-        return Promise.resolve(rngPick() < 0.5 ? a : b);
+      const mkPick = () => {
+        const rngPick = makeRng(seed * 2654435761 + 1);
+        return (a, b) => {
+          if (strat === "left") return Promise.resolve(a);
+          if (strat === "right") return Promise.resolve(b);
+          return Promise.resolve(rngPick() < 0.5 ? a : b);
+        };
       };
-      const ranking = await rankItems(items, makeRng(seed), pick);
 
-      checks++;
-      const ids = ranking.map((r) => r.id);
-      const uniq = new Set(ids);
-      const allFromInput = ids.every((id) => /^t\d+$/.test(id));
-      const ok = ranking.length === n && uniq.size === n && allFromInput;
+      // Validate BOTH engines: the one-at-a-time rankItems and the
+      // round-at-a-time rankItemsInteractive that powers the bracket UI.
+      const engines = {
+        rankItems: () => rankItems(items, makeRng(seed), mkPick()),
+        rankItemsInteractive: () =>
+          rankItemsInteractive(items, makeRng(seed), mkPick(), {}),
+      };
+
+      for (const [engineName, run] of Object.entries(engines)) {
+        const ranking = await run();
+        checks++;
+        const ids = ranking.map((r) => r.id);
+        const uniq = new Set(ids);
+        const allFromInput = ids.every((id) => /^t\d+$/.test(id));
+        const ok = ranking.length === n && uniq.size === n && allFromInput;
+        if (!ok) {
+          failures++;
+          console.error(
+            `FAIL ${engineName} n=${n} seed=${seed} strat=${strat}: len=${ranking.length} uniq=${uniq.size} allFromInput=${allFromInput}`,
+          );
+        }
+      }
 
       // Match count must be deterministic for a given seed regardless of picks.
       const total = await countMatches(items, seed);
-      const expectedMatches = Math.max(0, n - 1) + consolationMatches(n);
-
-      if (!ok) {
-        failures++;
-        console.error(
-          `FAIL n=${n} seed=${seed} strat=${strat}: len=${ranking.length} uniq=${uniq.size} allFromInput=${allFromInput}`,
-        );
-      }
-      // total is informational; we don't hard-assert the closed form, but
-      // we do require it to be a finite non-negative integer.
+      // total is informational; require it to be a finite non-negative integer.
       if (!Number.isInteger(total) || total < 0) {
         failures++;
         console.error(`FAIL n=${n} seed=${seed}: bad match total ${total}`);

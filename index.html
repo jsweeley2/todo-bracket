@@ -47,10 +47,99 @@
           transform: translateY(0);
         }
       }
+
+      /* March-Madness-style bracket */
+      .bracket-wrap {
+        overflow-x: auto;
+        padding: 0.25rem 0 0.75rem;
+      }
+      .bracket {
+        display: inline-flex;
+        gap: 1.25rem;
+        align-items: stretch;
+        min-width: min-content;
+      }
+      .round-col {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-around;
+        gap: 0.6rem;
+        min-width: 9.5rem;
+      }
+      .round-head {
+        text-align: center;
+        font-size: 0.65rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #94a3b8;
+        font-weight: 600;
+        margin-bottom: 0.15rem;
+      }
+      .match {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        margin: 0.35rem 0;
+      }
+      .cell {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 2px solid #e2e8f0;
+        background: #fff;
+        border-radius: 0.6rem;
+        padding: 0.5rem 0.6rem;
+        font-size: 0.85rem;
+        line-height: 1.25;
+        color: #334155;
+        overflow-wrap: anywhere;
+        transition:
+          background 0.15s,
+          border-color 0.15s,
+          color 0.15s;
+      }
+      .cell.empty {
+        border-style: dashed;
+        background: transparent;
+        min-height: 2.2rem;
+      }
+      .cell.bye {
+        border-style: dashed;
+        color: #cbd5e1;
+        background: transparent;
+      }
+      .cell.pending {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
+        cursor: pointer;
+      }
+      .cell.pending:hover,
+      .cell.pending:focus-visible {
+        border-color: #6366f1;
+        background: #eef2ff;
+        outline: none;
+      }
+      .cell.winner {
+        border-color: #6366f1;
+        background: #eef2ff;
+        color: #3730a3;
+        font-weight: 600;
+      }
+      .cell.loser {
+        color: #94a3b8;
+        background: #f8fafc;
+        text-decoration: line-through;
+      }
+      .cell.champion {
+        border-color: #f59e0b;
+        background: #fffbeb;
+        color: #92400e;
+        font-weight: 700;
+      }
     </style>
   </head>
   <body class="text-slate-800">
-    <main class="mx-auto max-w-2xl px-4 py-8 sm:py-12">
+    <main id="main" class="mx-auto max-w-2xl px-4 py-8 sm:py-12">
       <!-- Hero -->
       <header class="mb-8 text-center">
         <h1 class="text-3xl font-extrabold tracking-tight sm:text-4xl">
@@ -98,8 +187,12 @@
           </div>
         </div>
 
-        <!-- Matchup + results render here -->
-        <div id="stage" class="hidden"></div>
+        <!-- Bracket + results render here -->
+        <div id="stage" class="hidden">
+          <div id="progress" class="mb-4"></div>
+          <div id="brackets"></div>
+          <div id="results" class="mt-8"></div>
+        </div>
       </section>
 
       <footer class="mt-8 text-center text-xs text-slate-400">
@@ -109,15 +202,19 @@
 
     <script type="module">
       import {
-        rankItems,
+        rankItemsInteractive,
         makeRng,
         countMatches,
         roundName,
       } from "./bracket.js";
 
       const $ = (id) => document.getElementById(id);
+      const main = $("main");
       const landing = $("landing");
       const stage = $("stage");
+      const progressEl = $("progress");
+      const bracketsEl = $("brackets");
+      const resultsEl = $("results");
       const todosEl = $("todos");
       const startBtn = $("start");
       const countEl = $("count");
@@ -165,93 +262,180 @@
       todosEl.addEventListener("input", refreshCount);
       refreshCount();
 
-      // ---- matchup UI: returns a Promise resolving to the picked winner ----
-      function showMatchup(a, b, stageName, roundSize, matchNo, total) {
-        return new Promise((resolve) => {
-          clear(stage);
-          stage.classList.add("fade-in");
-          // strip+re-add to retrigger the animation
-          void stage.offsetWidth;
+      // ---- progress ----
+      let matchNo = 0;
+      let total = 0;
+      function updateProgress() {
+        clear(progressEl);
+        const label =
+          total === 0
+            ? "Pick the winner of each matchup"
+            : "Match " + Math.min(matchNo, total) + " of " + total;
+        progressEl.appendChild(
+          el(
+            "div",
+            "mb-1 text-xs font-medium uppercase tracking-wide text-slate-500",
+            label,
+          ),
+        );
+        const bar = el(
+          "div",
+          "h-1.5 w-full overflow-hidden rounded-full bg-slate-200",
+        );
+        const fill = el(
+          "div",
+          "h-full rounded-full bg-indigo-600 transition-all",
+        );
+        fill.style.width =
+          (total === 0 ? 0 : Math.round((matchNo / total) * 100)) + "%";
+        bar.appendChild(fill);
+        progressEl.appendChild(bar);
+      }
 
-          stage.appendChild(
-            el(
-              "div",
-              "mb-1 text-xs font-medium uppercase tracking-wide text-slate-400",
-              "Match " + matchNo + " of " + total,
-            ),
-          );
-          stage.appendChild(
-            el(
-              "div",
-              "mb-4 text-sm font-semibold text-indigo-600",
-              stageName + ": " + roundName(roundSize),
-            ),
-          );
+      // ---- bracket rendering ----
+      // A "cell" holds one slot: a real item, a bye (null), or a not-yet-known
+      // participant (undefined). Real-vs-real cells become clickable when the
+      // engine asks for that match; both start neutral grey, no preselection.
+      let currentWidget = null;
 
-          const grid = el("div", "grid grid-cols-1 gap-3 sm:grid-cols-2");
-          const base =
-            "w-full rounded-xl border-2 border-slate-200 bg-white p-5 text-left text-base font-medium text-slate-800 transition hover:border-indigo-400 hover:bg-indigo-50 break-words";
-          const focusCls = " border-indigo-500 ring-2 ring-indigo-200 bg-indigo-50";
+      function makeCell(value) {
+        const cell = el("button");
+        cell.type = "button";
+        cell.disabled = true;
+        if (value === undefined) {
+          cell.className = "cell empty";
+        } else if (value === null) {
+          cell.className = "cell bye";
+          cell.textContent = "bye";
+        } else {
+          cell.className = "cell";
+          cell.textContent = value.label;
+        }
+        return cell;
+      }
 
-          const cardA = el("button", base, a.label);
-          const cardB = el("button", base, b.label);
-          cardA.type = "button";
-          cardB.type = "button";
-          grid.appendChild(cardA);
-          grid.appendChild(cardB);
-          stage.appendChild(grid);
-          stage.appendChild(
-            el(
-              "div",
-              "mt-4 text-xs text-slate-400",
-              "Click a card, or use ← / → then Enter.",
-            ),
-          );
+      function renderBracketWidget({ stageName, slots, startRank }) {
+        const S = slots.length;
+        const R = Math.round(Math.log2(S)); // match-rounds 0..R-1, champion col R
 
-          let focused = cardA;
-          function setFocus(card) {
-            cardA.className = base;
-            cardB.className = base;
-            card.className = base + focusCls;
-            focused = card;
+        // Resolve byes forward so auto-advances show without a click.
+        const cols = [slots.slice()];
+        for (let c = 1; c <= R; c++) {
+          const prev = cols[c - 1];
+          const cur = [];
+          for (let j = 0; j < prev.length / 2; j++) {
+            const x = prev[2 * j];
+            const y = prev[2 * j + 1];
+            let v;
+            if (x === undefined || y === undefined) v = undefined;
+            else if (x && y) v = undefined; // real vs real -> needs a pick
+            else if (x || y) v = x || y; // real vs bye -> auto-advance
+            else v = null; // bye vs bye
+            cur.push(v);
           }
-          setFocus(cardA);
+          cols.push(cur);
+        }
 
-          function finish(winner) {
-            document.removeEventListener("keydown", onKey);
+        const wrap = el("div", "bracket-wrap fade-in");
+        const realCount = slots.filter(Boolean).length;
+        const title =
+          stageName === "Winners"
+            ? "Winners bracket"
+            : "Consolation: places " +
+              startRank +
+              "-" +
+              (startRank + realCount - 1);
+        wrap.appendChild(
+          el(
+            "div",
+            "mb-2 text-sm font-semibold " +
+              (stageName === "Winners" ? "text-indigo-700" : "text-slate-600"),
+            title,
+          ),
+        );
+
+        const bracket = el("div", "bracket");
+        const cellRefs = [];
+        for (let c = 0; c <= R; c++) {
+          const colDiv = el("div", "round-col");
+          colDiv.appendChild(
+            el(
+              "div",
+              "round-head",
+              c < R ? roundName(cols[c].length) : "Champion",
+            ),
+          );
+          cellRefs[c] = [];
+          if (c < R) {
+            const numMatches = cols[c].length / 2;
+            for (let m = 0; m < numMatches; m++) {
+              const matchDiv = el("div", "match");
+              for (const slot of [2 * m, 2 * m + 1]) {
+                const cell = makeCell(cols[c][slot]);
+                cellRefs[c][slot] = cell;
+                matchDiv.appendChild(cell);
+              }
+              colDiv.appendChild(matchDiv);
+            }
+          } else {
+            const cell = makeCell(cols[c][0]);
+            cellRefs[c][0] = cell;
+            colDiv.appendChild(cell);
+          }
+          bracket.appendChild(colDiv);
+        }
+        wrap.appendChild(bracket);
+        bracketsEl.appendChild(wrap);
+        wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+        currentWidget = { cellRefs, R };
+      }
+
+      // Resolves to the winner when the user clicks. Both cards neutral grey
+      // until clicked; the winner flows into the next column.
+      function pick(a, b, stageName, size, round, matchIndex) {
+        return new Promise((resolve) => {
+          const w = currentWidget;
+          const cellA = w.cellRefs[round][2 * matchIndex];
+          const cellB = w.cellRefs[round][2 * matchIndex + 1];
+          cellA.textContent = a.label;
+          cellB.textContent = b.label;
+          cellA.className = "cell pending";
+          cellB.className = "cell pending";
+          cellA.disabled = false;
+          cellB.disabled = false;
+
+          function choose(winner, wonCell, lostCell) {
+            cellA.onclick = null;
+            cellB.onclick = null;
+            cellA.disabled = true;
+            cellB.disabled = true;
+            wonCell.className = "cell winner";
+            lostCell.className = "cell loser";
+            const isFinal = round + 1 === w.R;
+            const nextCell = w.cellRefs[round + 1] && w.cellRefs[round + 1][matchIndex];
+            if (nextCell) {
+              nextCell.textContent = (isFinal ? "🏆 " : "") + winner.label;
+              nextCell.className = isFinal ? "cell champion" : "cell";
+            }
+            matchNo++;
+            updateProgress();
             resolve(winner);
           }
-          cardA.addEventListener("click", () => finish(a));
-          cardB.addEventListener("click", () => finish(b));
-          function onKey(ev) {
-            const ae = document.activeElement;
-            if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA"))
-              return;
-            if (ev.key === "ArrowLeft") {
-              setFocus(cardA);
-              ev.preventDefault();
-            } else if (ev.key === "ArrowRight") {
-              setFocus(cardB);
-              ev.preventDefault();
-            } else if (ev.key === "Enter") {
-              finish(focused === cardB ? b : a);
-              ev.preventDefault();
-            }
-          }
-          document.addEventListener("keydown", onKey);
+          cellA.onclick = () => choose(a, cellA, cellB);
+          cellB.onclick = () => choose(b, cellB, cellA);
         });
       }
 
       // ---- results ----
       function showResults(ranking) {
-        clear(stage);
-        stage.classList.add("fade-in");
-        void stage.offsetWidth;
+        clear(resultsEl);
+        resultsEl.classList.add("fade-in");
 
-        stage.appendChild(
+        resultsEl.appendChild(
           el(
             "div",
-            "mb-4 text-sm font-semibold text-slate-500",
+            "mb-4 border-t border-slate-200 pt-6 text-sm font-semibold text-slate-500",
             "Your priority ranking",
           ),
         );
@@ -276,7 +460,7 @@
           row.appendChild(el("span", null, (i === 0 ? "🏆 " : "") + item.label));
           list.appendChild(row);
         });
-        stage.appendChild(list);
+        resultsEl.appendChild(list);
 
         const btns = el("div", "mt-5 flex flex-wrap gap-2");
         const copyText = el(
@@ -312,7 +496,8 @@
         btns.appendChild(copyText);
         btns.appendChild(copyMd);
         btns.appendChild(again);
-        stage.appendChild(btns);
+        resultsEl.appendChild(btns);
+        resultsEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
 
       function copy(text, btn, label) {
@@ -328,8 +513,8 @@
       }
 
       function showError(msg) {
-        clear(stage);
-        stage.appendChild(
+        clear(resultsEl);
+        resultsEl.appendChild(
           el("div", "text-sm font-medium text-red-600", msg),
         );
         const again = el(
@@ -339,13 +524,20 @@
         );
         again.type = "button";
         again.addEventListener("click", reset);
-        stage.appendChild(again);
+        resultsEl.appendChild(again);
       }
 
       function reset() {
-        clear(stage);
+        clear(progressEl);
+        clear(bracketsEl);
+        clear(resultsEl);
+        currentWidget = null;
+        matchNo = 0;
+        total = 0;
         stage.classList.add("hidden");
         landing.classList.remove("hidden");
+        main.classList.remove("max-w-6xl");
+        main.classList.add("max-w-2xl");
         refreshCount();
       }
 
@@ -355,16 +547,21 @@
         if (items.length < 2) return;
         landing.classList.add("hidden");
         stage.classList.remove("hidden");
+        main.classList.remove("max-w-2xl");
+        main.classList.add("max-w-6xl");
+
+        clear(progressEl);
+        clear(bracketsEl);
+        clear(resultsEl);
+        matchNo = 0;
 
         const seed = (Math.random() * 2 ** 32) >>> 0;
-        const total = await countMatches(items, seed);
-        let matchNo = 0;
-        const ranking = await rankItems(
-          items,
-          makeRng(seed),
-          (a, b, stageName, roundSize) =>
-            showMatchup(a, b, stageName, roundSize, ++matchNo, total),
-        );
+        total = await countMatches(items, seed);
+        updateProgress();
+
+        const ranking = await rankItemsInteractive(items, makeRng(seed), pick, {
+          onBracket: renderBracketWidget,
+        });
 
         // Ship-blocking sanity check: exactly N unique original items.
         const ids = ranking.map((r) => r.id);
